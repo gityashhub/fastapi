@@ -62,8 +62,28 @@ const api = {
     return response.data;
   },
 
-  detectAnomalies: async (sessionId) => {
-    const response = await client.post(`/anomaly/detect/${sessionId}`);
+  detectAnomalies: async (sessionId, column = null) => {
+    const url = column 
+      ? `/anomaly/detect/${sessionId}/${column}`
+      : `/anomaly/detect/${sessionId}`;
+    const response = await client.post(url);
+    return response.data;
+  },
+
+  detectDuplicates: async (sessionId, columns = null) => {
+    const response = await client.post('/anomaly/duplicates/detect', {
+      session_id: sessionId,
+      columns,
+    });
+    return response.data;
+  },
+
+  removeDuplicates: async (sessionId, columns = null, keep = 'first') => {
+    const response = await client.post('/anomaly/duplicates/remove', {
+      session_id: sessionId,
+      columns,
+      keep,
+    });
     return response.data;
   },
 
@@ -90,6 +110,25 @@ const api = {
       method_type: methodType,
       method_name: methodName,
       parameters,
+    });
+    return response.data;
+  },
+
+  previewCleaning: async (sessionId, column, methodType, methodName, parameters = {}) => {
+    const response = await client.post('/clean/preview', {
+      session_id: sessionId,
+      column,
+      method_type: methodType,
+      method_name: methodName,
+      parameters,
+    });
+    return response.data;
+  },
+
+  configureWeights: async (sessionId, weightColumn) => {
+    const response = await client.post('/weights/configure', {
+      session_id: sessionId,
+      weight_column: weightColumn,
     });
     return response.data;
   },
@@ -129,6 +168,14 @@ const api = {
     return response.data;
   },
 
+  getAITestRecommendation: async (sessionId, question) => {
+    const response = await client.post('/hypothesis/ai-recommend', {
+      session_id: sessionId,
+      question,
+    });
+    return response.data;
+  },
+
   balanceData: async (sessionId, targetColumn, method, parameters = {}) => {
     const response = await client.post('/balance', {
       session_id: sessionId,
@@ -141,6 +188,20 @@ const api = {
 
   getBalancingMethods: async () => {
     const response = await client.get('/balance/methods');
+    return response.data;
+  },
+
+  getClassDistribution: async (sessionId, column) => {
+    const response = await client.get(`/balance/distribution/${sessionId}/${column}`);
+    return response.data;
+  },
+
+  stratifiedSplit: async (sessionId, targetColumn, testSize = 0.2) => {
+    const response = await client.post('/balance/split', {
+      session_id: sessionId,
+      target_column: targetColumn,
+      test_size: testSize,
+    });
     return response.data;
   },
 
@@ -164,6 +225,16 @@ const api = {
     return response.data;
   },
 
+  generateChart: async (sessionId, chartType, columns, config = {}) => {
+    const response = await client.post('/visualization/generate', {
+      session_id: sessionId,
+      chart_type: chartType,
+      columns,
+      config,
+    });
+    return response.data;
+  },
+
   exportConfig: async (sessionId) => {
     const response = await client.post(`/export/config/${sessionId}`);
     return response.data;
@@ -181,16 +252,35 @@ const api = {
     return response.data;
   },
 
+  generateReportPreview: async (sessionId, options = {}) => {
+    const response = await client.post('/report/preview', {
+      session_id: sessionId,
+      ...options,
+    });
+    return response.data;
+  },
+
+  generateReport: async (sessionId, options = {}) => {
+    const response = await client.post('/report/generate', {
+      session_id: sessionId,
+      ...options,
+    }, {
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
   reset: async (sessionId) => {
     const response = await client.post(`/reset/${sessionId}`);
     return response.data;
   },
 
-  askAI: async (sessionId, question, column = null) => {
+  askAI: async (sessionId, question, column = null, context = {}) => {
     const response = await client.post('/ai/ask', {
       session_id: sessionId,
       question,
       column,
+      ...context,
     });
     return response.data;
   },

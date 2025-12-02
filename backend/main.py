@@ -1025,6 +1025,497 @@ def clear_ai_history(session_id: str):
     assistant.clear_conversation_history()
     return {"success": True}
 
+@app.post("/api/anomaly/detect/{session_id}/{column}")
+def detect_column_anomalies(session_id: str, column: str):
+    session = get_session(session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    
+    if column not in df.columns:
+        raise HTTPException(status_code=404, detail=f"Column {column} not found")
+    
+    detector = AnomalyDetector()
+    column_type = session["column_types"].get(column, "unknown")
+    
+    anomalies = detector.detect_column_anomalies(df, column, column_type)
+    
+    return make_serializable(anomalies)
+
+class DuplicateDetectRequest(BaseModel):
+    session_id: str
+    columns: Optional[List[str]] = None
+
+class DuplicateRemoveRequest(BaseModel):
+    session_id: str
+    columns: Optional[List[str]] = None
+    keep: str = "first"
+
+@app.post("/api/anomaly/duplicates/detect")
+def detect_duplicates(request: DuplicateDetectRequest):
+    session = get_session(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    
+    subset = request.columns if request.columns and len(request.columns) > 0 else None
+    duplicates = df.duplicated(subset=subset, keep='first')
+    duplicate_count = int(duplicates.sum())
+    
+    sample_duplicates = []
+    if duplicate_count > 0:
+        dup_indices = df[duplicates].head(100).index.tolist()
+        for idx in dup_indices:
+            row = {str(col): serialize_value(df.loc[idx, col]) for col in df.columns}
+            sample_duplicates.append(row)
+    
+    return {
+        "duplicate_count": duplicate_count,
+        "duplicate_percentage": round((duplicate_count / len(df)) * 100, 2),
+        "sample_duplicates": sample_duplicates,
+        "total_rows": len(df)
+    }
+
+@app.post("/api/anomaly/duplicates/remove")
+def remove_duplicates(request: DuplicateRemoveRequest):
+    session = get_session(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    session["undo_stack"].append({
+        "dataset": session["dataset"].copy(),
+        "timestamp": datetime.now().isoformat()
+    })
+    if len(session["undo_stack"]) > 20:
+        session["undo_stack"].pop(0)
+    session["redo_stack"].clear()
+    
+    df = session["dataset"]
+    original_count = len(df)
+    
+    subset = request.columns if request.columns and len(request.columns) > 0 else None
+    keep = request.keep if request.keep in ['first', 'last', False] else 'first'
+    if keep == 'none':
+        keep = False
+    
+    df_clean = df.drop_duplicates(subset=subset, keep=keep)
+    session["dataset"] = df_clean
+    
+    removed = original_count - len(df_clean)
+    
+    return {
+        "success": True,
+        "original_count": original_count,
+        "new_count": len(df_clean),
+        "removed_count": removed
+    }
+
+class ChartRequest(BaseModel):
+    session_id: str
+    chart_type: str
+    columns: List[str]
+    config: Optional[Dict[str, Any]] = None
+
+@app.post("/api/visualization/generate")
+def generate_chart(request: ChartRequest):
+    session = get_session(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    visualizer = DataVisualizer()
+    
+    try:
+        if request.chart_type == 'bar':
+            if len(request.columns) >= 1:
+                fig = visualizer.plot_bar_chart(df, request.columns[0], request.columns[1] if len(request.columns) > 1 else None)
+            else:
+                raise HTTPException(status_code=400, detail="Bar chart requires at least 1 column")
+        elif request.chart_type == 'line':
+            fig = visualizer.plot_line_chart(df, request.columns)
+        elif request.chart_type == 'scatter':
+            if len(request.columns) >= 2:
+                fig = visualizer.plot_scatter(df, request.columns[0], request.columns[1])
+            else:
+                raise HTTPException(status_code=400, detail="Scatter requires 2 columns")
+        elif request.chart_type == 'box':
+            fig = visualizer.plot_box(df, request.columns)
+        elif request.chart_type == 'violin':
+            fig = visualizer.plot_violin(df, request.columns)
+        elif request.chart_type == 'histogram':
+            if len(request.columns) >= 1:
+                fig = visualizer.plot_column_distribution(df[request.columns[0]], request.columns[0])
+            else:
+                raise HTTPException(status_code=400, detail="Histogram requires at least 1 column")
+        elif request.chart_type == 'kde':
+            if len(request.columns) >= 1:
+                fig = visualizer.plot_kde(df, request.columns[0])
+            else:
+                raise HTTPException(status_code=400, detail="KDE requires at least 1 column")
+        elif request.chart_type == 'qq':
+            if len(request.columns) >= 1:
+                fig = visualizer.plot_qq(df, request.columns[0])
+            else:
+                raise HTTPException(status_code=400, detail="Q-Q plot requires at least 1 column")
+        elif request.chart_type == 'pie':
+            if len(request.columns) >= 1:
+                fig = visualizer.plot_pie(df, request.columns[0])
+            else:
+                raise HTTPException(status_code=400, detail="Pie chart requires at least 1 column")
+        elif request.chart_type == 'heatmap':
+            fig = visualizer.plot_heatmap(df, request.columns)
+        elif request.chart_type == 'correlation':
+            fig = visualizer.plot_correlation_matrix(df)
+        else:
+            if len(request.columns) >= 1:
+                fig = visualizer.plot_column_distribution(df[request.columns[0]], request.columns[0])
+            else:
+                raise HTTPException(status_code=400, detail="Unknown chart type")
+        
+        return {"chart": fig.to_json()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class WeightsRequest(BaseModel):
+    session_id: str
+    weight_column: str
+
+@app.post("/api/weights/configure")
+def configure_weights(request: WeightsRequest):
+    session = get_session(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    
+    if request.weight_column not in df.columns:
+        raise HTTPException(status_code=404, detail=f"Column {request.weight_column} not found")
+    
+    weights = df[request.weight_column].dropna()
+    
+    if len(weights) == 0:
+        raise HTTPException(status_code=400, detail="Weight column has no valid values")
+    
+    mean_weight = float(weights.mean())
+    sum_weights = float(weights.sum())
+    sum_squared = float((weights ** 2).sum())
+    design_effect = (sum_squared / (sum_weights ** 2)) * len(weights) if sum_weights > 0 else 1
+    effective_n = len(weights) / design_effect if design_effect > 0 else len(weights)
+    
+    session["weight_column"] = request.weight_column
+    
+    return {
+        "success": True,
+        "diagnostics": {
+            "mean": mean_weight,
+            "min": float(weights.min()),
+            "max": float(weights.max()),
+            "sum": sum_weights,
+            "design_effect": design_effect,
+            "effective_n": effective_n,
+            "n_valid": len(weights)
+        }
+    }
+
+class CleanPreviewRequest(BaseModel):
+    session_id: str
+    column: str
+    method_type: str
+    method_name: str
+    parameters: Optional[Dict[str, Any]] = None
+
+@app.post("/api/clean/preview")
+def preview_cleaning(request: CleanPreviewRequest):
+    session = get_session(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"].copy()
+    engine = DataCleaningEngine()
+    
+    try:
+        original_series = df[request.column].copy()
+        cleaned_series, metadata = engine.apply_cleaning_method(
+            df, request.column, request.method_type, request.method_name, request.parameters
+        )
+        
+        changes = []
+        for idx in range(min(len(original_series), 100)):
+            if pd.isna(original_series.iloc[idx]) and not pd.isna(cleaned_series.iloc[idx]):
+                changes.append({
+                    "index": idx,
+                    "before": None,
+                    "after": serialize_value(cleaned_series.iloc[idx])
+                })
+            elif not pd.isna(original_series.iloc[idx]) and original_series.iloc[idx] != cleaned_series.iloc[idx]:
+                changes.append({
+                    "index": idx,
+                    "before": serialize_value(original_series.iloc[idx]),
+                    "after": serialize_value(cleaned_series.iloc[idx])
+                })
+        
+        rows_affected = sum(1 for i in range(len(original_series)) 
+                          if (pd.isna(original_series.iloc[i]) != pd.isna(cleaned_series.iloc[i])) or 
+                          (not pd.isna(original_series.iloc[i]) and original_series.iloc[i] != cleaned_series.iloc[i]))
+        
+        return {
+            "rows_affected": rows_affected,
+            "percentage_changed": round((rows_affected / len(df)) * 100, 2),
+            "missing_before": int(original_series.isnull().sum()),
+            "missing_after": int(cleaned_series.isnull().sum()),
+            "sample_changes": changes[:20]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/balance/distribution/{session_id}/{column}")
+def get_class_distribution(session_id: str, column: str):
+    session = get_session(session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    
+    if column not in df.columns:
+        raise HTTPException(status_code=404, detail=f"Column {column} not found")
+    
+    distribution = df[column].value_counts().to_dict()
+    max_count = max(distribution.values()) if distribution else 0
+    min_count = min(distribution.values()) if distribution else 0
+    ratio = max_count / min_count if min_count > 0 else float('inf')
+    
+    return {
+        "distribution": {str(k): int(v) for k, v in distribution.items()},
+        "total": len(df),
+        "ratio": float(ratio) if np.isfinite(ratio) else 999,
+        "is_imbalanced": ratio > 1.5
+    }
+
+class StratifiedSplitRequest(BaseModel):
+    session_id: str
+    target_column: str
+    test_size: float = 0.2
+
+@app.post("/api/balance/split")
+def stratified_split(request: StratifiedSplitRequest):
+    session = get_session(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    
+    if request.target_column not in df.columns:
+        raise HTTPException(status_code=404, detail=f"Column {request.target_column} not found")
+    
+    try:
+        from sklearn.model_selection import train_test_split
+        
+        X = df.drop(columns=[request.target_column])
+        y = df[request.target_column]
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=request.test_size, stratify=y, random_state=42
+        )
+        
+        train_df = pd.concat([X_train, y_train], axis=1)
+        test_df = pd.concat([X_test, y_test], axis=1)
+        
+        session["train_data"] = train_df
+        session["test_data"] = test_df
+        
+        return {
+            "success": True,
+            "train_size": len(train_df),
+            "test_size": len(test_df),
+            "train_distribution": {str(k): int(v) for k, v in y_train.value_counts().to_dict().items()},
+            "test_distribution": {str(k): int(v) for k, v in y_test.value_counts().to_dict().items()}
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class AITestRecommendRequest(BaseModel):
+    session_id: str
+    question: str
+
+@app.post("/api/hypothesis/ai-recommend")
+def get_ai_test_recommendation(request: AITestRecommendRequest):
+    session = get_session(request.session_id)
+    assistant = get_ai_assistant(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    
+    dataset_info = {
+        'shape': f"{len(df)} rows x {len(df.columns)} columns",
+        'columns': len(df.columns),
+        'column_types': session["column_types"],
+        'column_names': list(df.columns)
+    }
+    assistant.set_context(dataset_info)
+    
+    numeric_cols = [col for col, t in session["column_types"].items() if t in ['continuous', 'integer', 'ordinal']]
+    categorical_cols = [col for col, t in session["column_types"].items() if t in ['categorical', 'binary']]
+    
+    try:
+        response = assistant.ask_question(
+            f"Based on the research question: '{request.question}', recommend the most appropriate statistical test. "
+            f"Available numeric columns: {numeric_cols}. Available categorical columns: {categorical_cols}. "
+            f"Provide: 1) Primary test recommendation with rationale, 2) Alternative tests, 3) Which columns to use."
+        )
+        
+        test_mapping = {
+            't-test': 'welch_ttest',
+            'anova': 'one_way_anova',
+            'chi-square': 'chi_square',
+            'correlation': 'pearson_correlation',
+            'mann-whitney': 'mann_whitney',
+            'kruskal': 'kruskal_wallis'
+        }
+        
+        detected_test = None
+        for keyword, test_id in test_mapping.items():
+            if keyword.lower() in response.lower():
+                detected_test = test_id
+                break
+        
+        return {
+            "primary_test": {
+                "test_id": detected_test or "welch_ttest",
+                "name": detected_test.replace('_', ' ').title() if detected_test else "Welch's T-Test",
+                "category": "Parametric" if detected_test in ['welch_ttest', 'one_way_anova', 'pearson_correlation'] else "Non-Parametric",
+                "rationale": response[:500],
+                "confidence": 75
+            },
+            "alternatives": [
+                {"name": "Mann-Whitney U", "reason": "Non-parametric alternative"},
+                {"name": "Spearman Correlation", "reason": "Rank-based alternative"}
+            ],
+            "suggested_columns": {
+                "numeric": numeric_cols[:5],
+                "categorical": categorical_cols[:5]
+            },
+            "full_response": response
+        }
+    except Exception as e:
+        return {
+            "primary_test": {
+                "test_id": "welch_ttest",
+                "name": "Welch's T-Test",
+                "category": "Parametric",
+                "rationale": "Default recommendation when AI is unavailable",
+                "confidence": 50
+            },
+            "alternatives": [],
+            "suggested_columns": {
+                "numeric": numeric_cols[:5],
+                "categorical": categorical_cols[:5]
+            },
+            "error": str(e)
+        }
+
+class ReportRequest(BaseModel):
+    session_id: str
+    sections: Optional[List[str]] = None
+    format: str = "html"
+    include_charts: bool = True
+    include_raw_data: bool = False
+
+@app.post("/api/report/preview")
+def generate_report_preview(request: ReportRequest):
+    session = get_session(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    
+    summary = {
+        "dataset_name": "Uploaded Dataset",
+        "rows": len(df),
+        "columns": len(df.columns),
+        "missing_values": int(df.isnull().sum().sum()),
+        "memory_usage": round(df.memory_usage(deep=True).sum() / 1024**2, 2),
+        "generated_at": datetime.now().isoformat()
+    }
+    
+    quality = {}
+    if session["column_analysis"]:
+        analyzed = len(session["column_analysis"])
+        with_issues = sum(1 for a in session["column_analysis"].values() 
+                        if a.get('data_quality', {}).get('issues', []))
+        avg_score = sum(a.get('data_quality', {}).get('score', 0) 
+                       for a in session["column_analysis"].values()) / max(analyzed, 1)
+        quality = {
+            "analyzed": analyzed,
+            "withIssues": with_issues,
+            "avgScore": avg_score
+        }
+    
+    return {
+        "summary": summary,
+        "quality": quality,
+        "cleaning": make_serializable(session["cleaning_history"]),
+        "statistics": {
+            "numeric_columns": len(df.select_dtypes(include=[np.number]).columns),
+            "categorical_columns": len(df.select_dtypes(exclude=[np.number]).columns),
+            "columns_with_missing": len([c for c in df.columns if df[c].isnull().any()])
+        }
+    }
+
+@app.post("/api/report/generate")
+def generate_report(request: ReportRequest):
+    session = get_session(request.session_id)
+    
+    if session["dataset"] is None:
+        raise HTTPException(status_code=404, detail="No dataset loaded")
+    
+    df = session["dataset"]
+    
+    try:
+        report_generator = ReportGenerator()
+        
+        report_data = {
+            "summary": {
+                "dataset_name": "Uploaded Dataset",
+                "rows": len(df),
+                "columns": len(df.columns),
+                "missing_values": int(df.isnull().sum().sum()),
+                "generated_at": datetime.now().isoformat()
+            },
+            "column_analysis": make_serializable(session["column_analysis"]),
+            "cleaning_history": make_serializable(session["cleaning_history"]),
+            "column_types": session["column_types"]
+        }
+        
+        if request.format == "html":
+            html_content = report_generator.generate_html_report(report_data, df)
+            return StreamingResponse(
+                iter([html_content]),
+                media_type="text/html",
+                headers={"Content-Disposition": "attachment; filename=report.html"}
+            )
+        else:
+            html_content = report_generator.generate_html_report(report_data, df)
+            return StreamingResponse(
+                iter([html_content]),
+                media_type="text/html",
+                headers={"Content-Disposition": "attachment; filename=report.html"}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

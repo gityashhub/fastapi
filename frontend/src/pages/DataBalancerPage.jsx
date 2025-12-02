@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Scale, Play, Info, ArrowUp, ArrowDown, Shuffle, RefreshCw } from 'lucide-react';
+import { Scale, Play, Info, ArrowUp, ArrowDown, Shuffle, RefreshCw, Download, CheckCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../services/api';
 import toast from 'react-hot-toast';
+import MetricCard from '../components/MetricCard';
+import Plot from 'react-plotly.js';
 
 const fallbackMethods = {
   Oversampling: [
@@ -14,6 +16,12 @@ const fallbackMethods = {
     { id: 'tomek', name: 'Tomek Links', description: 'Remove borderline majority samples' },
     { id: 'enn', name: 'ENN', description: 'Edited Nearest Neighbors' },
     { id: 'nearmiss1', name: 'NearMiss-1', description: 'Keep majority samples closest to minority' },
+    { id: 'nearmiss2', name: 'NearMiss-2', description: 'Keep majority samples farthest from minority' },
+    { id: 'nearmiss3', name: 'NearMiss-3', description: 'M-nearest neighbors approach' },
+    { id: 'cnn', name: 'CNN', description: 'Condensed Nearest Neighbors' },
+    { id: 'oss', name: 'OSS', description: 'One-Sided Selection' },
+    { id: 'cluster_centroids', name: 'Cluster Centroids', description: 'Use cluster centroids for undersampling' },
+    { id: 'ncr', name: 'NCR', description: 'Neighborhood Cleaning Rule' },
   ],
   Hybrid: [
     { id: 'smoteenn', name: 'SMOTE + ENN', description: 'SMOTE with Edited Nearest Neighbors cleaning' },
@@ -22,17 +30,32 @@ const fallbackMethods = {
 };
 
 export default function DataBalancerPage() {
-  const { sessionId, dataset, columnInfo, columnTypes, fetchStats } = useApp();
+  const { sessionId, dataset, columnInfo, columnTypes, fetchStats, stats } = useApp();
+  const [featureColumns, setFeatureColumns] = useState([]);
   const [targetColumn, setTargetColumn] = useState('');
   const [method, setMethod] = useState('smote');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [activeCategory, setActiveCategory] = useState('Oversampling');
   const [balancingMethods, setBalancingMethods] = useState(fallbackMethods);
+  const [dataUsage, setDataUsage] = useState('whole');
+  const [testPercentage, setTestPercentage] = useState(20);
+  const [splitData, setSplitData] = useState(null);
+  const [classDistribution, setClassDistribution] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [validationErrors, setValidationErrors] = useState([]);
+  const [validationWarnings, setValidationWarnings] = useState([]);
 
   useEffect(() => {
     loadBalancingMethods();
   }, []);
+
+  useEffect(() => {
+    if (targetColumn) {
+      loadClassDistribution();
+      validateSelection();
+    }
+  }, [targetColumn, featureColumns]);
 
   const loadBalancingMethods = async () => {
     try {
@@ -52,8 +75,100 @@ export default function DataBalancerPage() {
     }
   };
 
+  const loadClassDistribution = async () => {
+    try {
+      const response = await api.getClassDistribution(sessionId, targetColumn);
+      setClassDistribution(response);
+    } catch (error) {
+      console.error('Failed to load class distribution:', error);
+    }
+  };
+
+  const validateSelection = () => {
+    const errors = [];
+    const warnings = [];
+
+    if (featureColumns.length === 0) {
+      errors.push('Select at least one feature column');
+    }
+
+    const colInfo = columnInfo.find(c => c.name === targetColumn);
+    if (colInfo && colInfo.missing_percentage > 0) {
+      errors.push(`Target column has ${colInfo.missing_percentage.toFixed(1)}% missing values`);
+    }
+
+    featureColumns.forEach(col => {
+      const info = columnInfo.find(c => c.name === col);
+      if (info && info.missing_percentage > 0) {
+        warnings.push(`${col} has ${info.missing_percentage.toFixed(1)}% missing values`);
+      }
+    });
+
+    setValidationErrors(errors);
+    setValidationWarnings(warnings);
+  };
+
+  const handleSplit = async () => {
+    if (!targetColumn) {
+      toast.error('Please select a target column first');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await api.stratifiedSplit(sessionId, targetColumn, testPercentage / 100);
+      setSplitData(result);
+      toast.success('Stratified split completed');
+    } catch (error) {
+      toast.error('Failed to perform split');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBalance = async () => {
+    if (!targetColumn) {
+      toast.error('Please select a target column');
+      return;
+    }
+
+    if (dataUsage === 'split' && !splitData) {
+      toast.error('Please perform the stratified split first');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const balanceResult = await api.balanceData(sessionId, targetColumn, method, {
+        feature_columns: featureColumns,
+        use_split: dataUsage === 'split'
+      });
+      setResult(balanceResult);
+      await fetchStats();
+      toast.success('Dataset balanced successfully');
+    } catch (error) {
+      toast.error(error.message || 'Balancing failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setResult(null);
+    setSplitData(null);
+    setFeatureColumns([]);
+    setTargetColumn('');
+    setMethod('smote');
+    setDataUsage('whole');
+    toast.success('Reset complete');
+  };
+
   const categoricalColumns = columnInfo.filter(col => 
     ['categorical', 'binary', 'ordinal'].includes(columnTypes[col.name] || col.detected_type)
+  );
+
+  const numericColumns = columnInfo.filter(col => 
+    ['continuous', 'integer'].includes(columnTypes[col.name] || col.detected_type)
   );
 
   const getCategoryIcon = (category) => {
@@ -65,24 +180,15 @@ export default function DataBalancerPage() {
     }
   };
 
-  const handleBalance = async () => {
-    if (!targetColumn) {
-      toast.error('Please select a target column');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const balanceResult = await api.balanceData(sessionId, targetColumn, method, {});
-      setResult(balanceResult);
-      await fetchStats();
-      toast.success('Dataset balanced successfully');
-    } catch (error) {
-      toast.error(error.message || 'Balancing failed');
-    } finally {
-      setLoading(false);
-    }
+  const toggleFeature = (col) => {
+    setFeatureColumns(prev =>
+      prev.includes(col)
+        ? prev.filter(c => c !== col)
+        : [...prev, col]
+    );
   };
+
+  const imbalanceRatio = classDistribution?.ratio || 1;
 
   if (!dataset) {
     return (
@@ -98,32 +204,216 @@ export default function DataBalancerPage() {
     <div className="space-y-6 animate-fade-in">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Data Balancer</h1>
-        <p className="text-gray-600">Balance class distribution for machine learning</p>
+        <p className="text-gray-600">Balance datasets for machine learning with oversampling, undersampling, or hybrid methods</p>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <div className="card">
-            <h3 className="font-semibold text-gray-800 mb-4">Step 1: Select Target Column</h3>
-            <p className="text-sm text-gray-600 mb-3">
-              Choose the categorical column you want to balance (usually your target/label column)
+            <h3 className="font-semibold text-gray-800 mb-4">Step 1: Select Columns</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              <strong>Feature columns:</strong> Select numeric columns to use as features.
+              <strong className="ml-2">Target column:</strong> Select the categorical column to balance.
             </p>
-            <select
-              className="select-field"
-              value={targetColumn}
-              onChange={(e) => setTargetColumn(e.target.value)}
-            >
-              <option value="">Select target column...</option>
-              {categoricalColumns.map((col) => (
-                <option key={col.name} value={col.name}>
-                  {col.name} ({col.unique_count} classes)
-                </option>
-              ))}
-            </select>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Feature Columns (numeric only)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {numericColumns.map((col) => (
+                    <button
+                      key={col.name}
+                      onClick={() => toggleFeature(col.name)}
+                      className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                        featureColumns.includes(col.name)
+                          ? 'bg-primary-100 text-primary-700 border-2 border-primary-500'
+                          : 'bg-gray-100 text-gray-700 border-2 border-transparent hover:bg-gray-200'
+                      }`}
+                    >
+                      {col.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Target Column
+                </label>
+                <select
+                  className="select-field"
+                  value={targetColumn}
+                  onChange={(e) => setTargetColumn(e.target.value)}
+                >
+                  <option value="">Select target column...</option>
+                  {categoricalColumns.map((col) => (
+                    <option key={col.name} value={col.name}>
+                      {col.name} ({col.unique_count} classes)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {validationErrors.length > 0 && (
+              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <ul className="text-sm text-red-700 space-y-1">
+                  {validationErrors.map((e, i) => <li key={i}>• {e}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {validationWarnings.length > 0 && (
+              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <ul className="text-sm text-yellow-700 space-y-1">
+                  {validationWarnings.map((w, i) => <li key={i}>• {w}</li>)}
+                </ul>
+                <p className="text-xs text-yellow-600 mt-2">
+                  Please use the Cleaning Wizard to handle missing values first.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {targetColumn && classDistribution && (
+            <div className="card">
+              <h3 className="font-semibold text-gray-800 mb-4">Current Class Distribution</h3>
+              
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <table className="data-table text-sm">
+                    <thead>
+                      <tr>
+                        <th>Class</th>
+                        <th>Count</th>
+                        <th>Percentage</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(classDistribution.distribution || {}).map(([cls, count]) => (
+                        <tr key={cls}>
+                          <td>{cls}</td>
+                          <td>{count.toLocaleString()}</td>
+                          <td>{((count / stats.total_rows) * 100).toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex items-center justify-center">
+                  {classDistribution.distribution && (
+                    <Plot
+                      data={[{
+                        x: Object.keys(classDistribution.distribution),
+                        y: Object.values(classDistribution.distribution),
+                        type: 'bar',
+                        marker: { color: 'lightblue' }
+                      }]}
+                      layout={{
+                        height: 200,
+                        margin: { t: 20, b: 40, l: 40, r: 20 },
+                        xaxis: { title: '' },
+                        yaxis: { title: 'Count' }
+                      }}
+                      config={{ displayModeBar: false }}
+                      style={{ width: '100%' }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {imbalanceRatio > 1.5 ? (
+                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-sm text-yellow-700">
+                    ⚠️ Imbalance ratio: {imbalanceRatio.toFixed(2)}:1 - Balancing recommended
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <p className="text-sm text-green-700">
+                    ✅ Imbalance ratio: {imbalanceRatio.toFixed(2)}:1 - Dataset is relatively balanced
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="card">
+            <h3 className="font-semibold text-gray-800 mb-4">Step 2: Choose Data Usage</h3>
+            <p className="text-sm text-gray-600 italic mb-4">
+              Recommendation: Use train/test split to evaluate your model on unbalanced test data.
+            </p>
+
+            <div className="flex gap-4 mb-4">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="dataUsage"
+                  value="whole"
+                  checked={dataUsage === 'whole'}
+                  onChange={() => setDataUsage('whole')}
+                  className="text-primary-600"
+                />
+                <span>Use Whole Data</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="dataUsage"
+                  value="split"
+                  checked={dataUsage === 'split'}
+                  onChange={() => setDataUsage('split')}
+                  className="text-primary-600"
+                />
+                <span>Use Split Data</span>
+              </label>
+            </div>
+
+            {dataUsage === 'split' && (
+              <div className="p-4 bg-gray-50 rounded-lg space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Test Percentage: {testPercentage}%
+                  </label>
+                  <input
+                    type="range"
+                    min="10"
+                    max="40"
+                    value={testPercentage}
+                    onChange={(e) => setTestPercentage(parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-4">
+                  <MetricCard title="Train Set" value={`${100 - testPercentage}%`} color="primary" />
+                  <MetricCard title="Test Set" value={`${testPercentage}%`} color="blue" />
+                </div>
+
+                <button
+                  onClick={handleSplit}
+                  disabled={loading || !targetColumn}
+                  className="btn-primary flex items-center gap-2"
+                >
+                  {loading ? <span className="loading-spinner" /> : <Shuffle className="w-4 h-4" />}
+                  Perform Stratified Split
+                </button>
+
+                {splitData && (
+                  <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                    <p className="text-sm text-green-700">
+                      ✅ Split complete: {splitData.train_size} train / {splitData.test_size} test rows
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="card">
-            <h3 className="font-semibold text-gray-800 mb-4">Step 2: Select Balancing Method</h3>
+            <h3 className="font-semibold text-gray-800 mb-4">Step 3: Choose Balancing Method</h3>
             
             <div className="flex gap-2 mb-4">
               {Object.keys(balancingMethods).map((category) => (
@@ -158,50 +448,135 @@ export default function DataBalancerPage() {
                 </button>
               ))}
             </div>
+
+            {method && (
+              <p className="mt-4 p-3 bg-green-50 rounded-lg text-sm text-green-700">
+                ✅ Selected method: <strong>{balancingMethods[activeCategory]?.find(m => m.id === method)?.name}</strong>
+              </p>
+            )}
           </div>
 
           <div className="card">
-            <button
-              onClick={handleBalance}
-              disabled={loading || !targetColumn}
-              className="btn-primary flex items-center gap-2"
-            >
-              {loading ? (
-                <span className="loading-spinner" />
-              ) : (
-                <Play className="w-4 h-4" />
-              )}
-              Balance Dataset
-            </button>
+            <h3 className="font-semibold text-gray-800 mb-4">Step 4: Apply Balancing</h3>
+            
+            {dataUsage === 'split' && !splitData && (
+              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
+                <p className="text-sm text-yellow-700">⚠️ Please perform the stratified split first</p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleBalance}
+                disabled={loading || !targetColumn || validationErrors.length > 0 || (dataUsage === 'split' && !splitData)}
+                className="btn-primary flex items-center gap-2"
+              >
+                {loading ? <span className="loading-spinner" /> : <Play className="w-4 h-4" />}
+                Apply Balancing
+              </button>
+              <button
+                onClick={handleReset}
+                className="btn-secondary flex items-center gap-2"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Reset All
+              </button>
+            </div>
           </div>
 
           {result?.success && result.summary && (
-            <div className="card bg-green-50 border-green-200">
-              <h4 className="font-semibold text-green-800 mb-3">Balancing Complete</h4>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="p-3 bg-white rounded-lg">
-                  <p className="text-xs text-gray-500">Original Samples</p>
-                  <p className="text-lg font-semibold">{result.summary.original_samples?.toLocaleString()}</p>
+            <>
+              <div className="card">
+                <h3 className="font-semibold text-gray-800 mb-4">Step 5: Results</h3>
+                
+                <div className="grid md:grid-cols-3 gap-4 mb-4">
+                  <MetricCard
+                    title="Original Size"
+                    value={result.summary.original_samples?.toLocaleString()}
+                    color="primary"
+                  />
+                  <MetricCard
+                    title="Balanced Size"
+                    value={result.summary.new_samples?.toLocaleString()}
+                    color="green"
+                  />
+                  <MetricCard
+                    title="Size Change"
+                    value={`${((result.summary.new_samples - result.summary.original_samples) / result.summary.original_samples * 100).toFixed(1)}%`}
+                    color="blue"
+                  />
                 </div>
-                <div className="p-3 bg-white rounded-lg">
-                  <p className="text-xs text-gray-500">New Samples</p>
-                  <p className="text-lg font-semibold text-green-600">{result.summary.new_samples?.toLocaleString()}</p>
+
+                {result.summary.class_distribution && (
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="font-medium text-gray-700 mb-2">After Balancing</h4>
+                      <table className="data-table text-sm">
+                        <thead>
+                          <tr>
+                            <th>Class</th>
+                            <th>Count</th>
+                            <th>Percentage</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(result.summary.class_distribution).map(([cls, count]) => (
+                            <tr key={cls}>
+                              <td>{cls}</td>
+                              <td>{count.toLocaleString()}</td>
+                              <td>{((count / result.summary.new_samples) * 100).toFixed(1)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex items-center justify-center">
+                      <Plot
+                        data={[{
+                          x: Object.keys(result.summary.class_distribution),
+                          y: Object.values(result.summary.class_distribution),
+                          type: 'bar',
+                          marker: { color: 'lightgreen' }
+                        }]}
+                        layout={{
+                          height: 200,
+                          margin: { t: 20, b: 40, l: 40, r: 20 }
+                        }}
+                        config={{ displayModeBar: false }}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="card">
+                <h3 className="font-semibold text-gray-800 mb-4">Step 6: Download Data</h3>
+                
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
+                  <p className="text-sm text-yellow-700">
+                    ⚠️ Important: The balanced dataset has {result.summary.new_samples - result.summary.original_samples > 0 ? 'more' : 'fewer'} rows than the original.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button className="btn-primary flex items-center gap-2">
+                    <Download className="w-4 h-4" />
+                    Download Balanced CSV
+                  </button>
+                  <button className="btn-secondary flex items-center gap-2">
+                    <Download className="w-4 h-4" />
+                    Download Excel
+                  </button>
+                  <button
+                    onClick={() => setShowPreview(!showPreview)}
+                    className="btn-secondary"
+                  >
+                    {showPreview ? 'Hide Preview' : 'Show Preview'}
+                  </button>
                 </div>
               </div>
-              {result.summary.class_distribution && (
-                <div className="mt-4">
-                  <p className="text-sm font-medium text-gray-700 mb-2">New Class Distribution:</p>
-                  <div className="space-y-2">
-                    {Object.entries(result.summary.class_distribution).map(([cls, count]) => (
-                      <div key={cls} className="flex items-center justify-between text-sm">
-                        <span className="text-gray-600">{cls}</span>
-                        <span className="font-medium">{count.toLocaleString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            </>
           )}
         </div>
 
@@ -209,23 +584,29 @@ export default function DataBalancerPage() {
           <div className="card sticky top-4">
             <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
               <Info className="w-5 h-5 text-primary-600" />
-              About Balancing
+              Guide to Data Balancing
             </h3>
             <div className="space-y-4 text-sm text-gray-600">
-              <p>
-                <strong>Why balance?</strong> Imbalanced datasets can lead to biased machine learning models that perform poorly on minority classes.
-              </p>
-              <p>
-                <strong>Oversampling</strong> creates synthetic samples of the minority class to match the majority.
-              </p>
-              <p>
-                <strong>Undersampling</strong> reduces the majority class to match the minority.
-              </p>
-              <p>
-                <strong>SMOTE</strong> creates synthetic samples by interpolating between existing minority samples.
-              </p>
-              <div className="p-3 bg-yellow-50 rounded-lg text-yellow-700">
-                <strong>Note:</strong> Balancing changes your dataset. Use undo if you want to revert.
+              <div>
+                <h4 className="font-medium text-gray-800">Why Balance?</h4>
+                <p>Imbalanced datasets can lead to biased ML models that perform poorly on minority classes.</p>
+              </div>
+              <div>
+                <h4 className="font-medium text-gray-800">Which Method?</h4>
+                <ul className="space-y-1 mt-1">
+                  <li>• <strong>SMOTE:</strong> Best for most cases</li>
+                  <li>• <strong>Random Over:</strong> Simple but may overfit</li>
+                  <li>• <strong>Tomek Links:</strong> Clean decision boundaries</li>
+                  <li>• <strong>Hybrid:</strong> Best of both worlds</li>
+                </ul>
+              </div>
+              <div>
+                <h4 className="font-medium text-gray-800">Considerations</h4>
+                <ul className="space-y-1 mt-1">
+                  <li>• Always use stratified split</li>
+                  <li>• Balance only training data</li>
+                  <li>• Keep test data unchanged</li>
+                </ul>
               </div>
             </div>
           </div>
