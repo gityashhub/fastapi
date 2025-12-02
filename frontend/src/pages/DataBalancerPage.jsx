@@ -1,17 +1,25 @@
-import { useState } from 'react';
-import { Scale, Play, Info } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Scale, Play, Info, ArrowUp, ArrowDown, Shuffle, RefreshCw } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 
-const balancingMethods = [
-  { id: 'random_oversample', name: 'Random Oversampling', description: 'Duplicate minority class samples randomly' },
-  { id: 'random_undersample', name: 'Random Undersampling', description: 'Remove majority class samples randomly' },
-  { id: 'smote', name: 'SMOTE', description: 'Synthetic Minority Over-sampling Technique' },
-  { id: 'adasyn', name: 'ADASYN', description: 'Adaptive Synthetic Sampling' },
-  { id: 'smoteenn', name: 'SMOTE + ENN', description: 'SMOTE with Edited Nearest Neighbors cleaning' },
-  { id: 'smotetomek', name: 'SMOTE + Tomek', description: 'SMOTE with Tomek links cleaning' },
-];
+const fallbackMethods = {
+  Oversampling: [
+    { id: 'random_oversample', name: 'Random Oversampling', description: 'Duplicate minority class samples randomly' },
+    { id: 'smote', name: 'SMOTE', description: 'Synthetic Minority Over-sampling Technique' },
+  ],
+  Undersampling: [
+    { id: 'random_undersample', name: 'Random Undersampling', description: 'Remove majority class samples randomly' },
+    { id: 'tomek', name: 'Tomek Links', description: 'Remove borderline majority samples' },
+    { id: 'enn', name: 'ENN', description: 'Edited Nearest Neighbors' },
+    { id: 'nearmiss1', name: 'NearMiss-1', description: 'Keep majority samples closest to minority' },
+  ],
+  Hybrid: [
+    { id: 'smoteenn', name: 'SMOTE + ENN', description: 'SMOTE with Edited Nearest Neighbors cleaning' },
+    { id: 'smotetomek', name: 'SMOTE + Tomek', description: 'SMOTE with Tomek links cleaning' },
+  ]
+};
 
 export default function DataBalancerPage() {
   const { sessionId, dataset, columnInfo, columnTypes, fetchStats } = useApp();
@@ -19,10 +27,43 @@ export default function DataBalancerPage() {
   const [method, setMethod] = useState('smote');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const [activeCategory, setActiveCategory] = useState('Oversampling');
+  const [balancingMethods, setBalancingMethods] = useState(fallbackMethods);
+
+  useEffect(() => {
+    loadBalancingMethods();
+  }, []);
+
+  const loadBalancingMethods = async () => {
+    try {
+      const response = await api.getBalancingMethods();
+      if (response.methods && response.methods.length > 0) {
+        const grouped = {};
+        response.methods.forEach(m => {
+          if (!grouped[m.category]) {
+            grouped[m.category] = [];
+          }
+          grouped[m.category].push(m);
+        });
+        setBalancingMethods(grouped);
+      }
+    } catch (error) {
+      console.error('Failed to load balancing methods:', error);
+    }
+  };
 
   const categoricalColumns = columnInfo.filter(col => 
     ['categorical', 'binary', 'ordinal'].includes(columnTypes[col.name] || col.detected_type)
   );
+
+  const getCategoryIcon = (category) => {
+    switch (category) {
+      case 'Oversampling': return <ArrowUp className="w-4 h-4" />;
+      case 'Undersampling': return <ArrowDown className="w-4 h-4" />;
+      case 'Hybrid': return <Shuffle className="w-4 h-4" />;
+      default: return null;
+    }
+  };
 
   const handleBalance = async () => {
     if (!targetColumn) {
@@ -83,8 +124,26 @@ export default function DataBalancerPage() {
 
           <div className="card">
             <h3 className="font-semibold text-gray-800 mb-4">Step 2: Select Balancing Method</h3>
+            
+            <div className="flex gap-2 mb-4">
+              {Object.keys(balancingMethods).map((category) => (
+                <button
+                  key={category}
+                  onClick={() => setActiveCategory(category)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeCategory === category
+                      ? 'bg-primary-100 text-primary-700 border-2 border-primary-500'
+                      : 'bg-gray-100 text-gray-600 border-2 border-transparent hover:bg-gray-200'
+                  }`}
+                >
+                  {getCategoryIcon(category)}
+                  {category}
+                </button>
+              ))}
+            </div>
+
             <div className="grid md:grid-cols-2 gap-3">
-              {balancingMethods.map((m) => (
+              {balancingMethods[activeCategory]?.map((m) => (
                 <button
                   key={m.id}
                   onClick={() => setMethod(m.id)}

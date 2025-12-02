@@ -670,8 +670,84 @@ def get_available_tests():
         ]
     }
 
+METHOD_ID_MAPPING = {
+    'random_oversample': 'Random Oversampling',
+    'random_oversampling': 'Random Oversampling',
+    'random_undersample': 'Random Undersampling',
+    'random_undersampling': 'Random Undersampling',
+    'smote': 'SMOTE',
+    'smotetomek': 'SMOTE + Tomek Links',
+    'smote_tomek': 'SMOTE + Tomek Links',
+    'smote_tomek_links': 'SMOTE + Tomek Links',
+    'smoteenn': 'SMOTE + ENN',
+    'smote_enn': 'SMOTE + ENN',
+    'tomek': 'Tomek Links',
+    'tomek_links': 'Tomek Links',
+    'nearmiss1': 'NearMiss-1',
+    'nearmiss_1': 'NearMiss-1',
+    'nearmiss2': 'NearMiss-2',
+    'nearmiss_2': 'NearMiss-2',
+    'nearmiss3': 'NearMiss-3',
+    'nearmiss_3': 'NearMiss-3',
+    'enn': 'ENN',
+    'cnn': 'CNN',
+    'oss': 'OSS',
+    'cluster_centroids': 'Cluster Centroids',
+    'ncr': 'NCR',
+}
+
+CANONICAL_METHOD_IDS = {
+    'Random Oversampling': 'random_oversample',
+    'SMOTE': 'smote',
+    'Random Undersampling': 'random_undersample',
+    'Tomek Links': 'tomek',
+    'NearMiss-1': 'nearmiss1',
+    'NearMiss-2': 'nearmiss2',
+    'NearMiss-3': 'nearmiss3',
+    'ENN': 'enn',
+    'CNN': 'cnn',
+    'OSS': 'oss',
+    'Cluster Centroids': 'cluster_centroids',
+    'NCR': 'ncr',
+    'SMOTE + Tomek Links': 'smotetomek',
+    'SMOTE + ENN': 'smoteenn',
+}
+
+METHOD_DESCRIPTIONS = {
+    'Random Oversampling': 'Duplicate minority class samples randomly',
+    'SMOTE': 'Synthetic Minority Over-sampling Technique',
+    'Random Undersampling': 'Remove majority class samples randomly',
+    'Tomek Links': 'Remove borderline majority samples',
+    'NearMiss-1': 'Keep majority samples closest to minority',
+    'NearMiss-2': 'Keep majority samples closest to all minority',
+    'NearMiss-3': 'Keep majority samples closest to each minority',
+    'ENN': 'Edited Nearest Neighbors - remove noisy samples',
+    'CNN': 'Condensed Nearest Neighbors - keep boundary samples',
+    'OSS': 'One-Sided Selection - Tomek links + random undersampling',
+    'Cluster Centroids': 'Replace majority clusters with centroids',
+    'NCR': 'Neighborhood Cleaning Rule',
+    'SMOTE + Tomek Links': 'SMOTE with Tomek links cleaning',
+    'SMOTE + ENN': 'SMOTE with Edited Nearest Neighbors cleaning',
+}
+
+@app.get("/api/balance/methods")
+def get_balancing_methods():
+    balancer = DataBalancer()
+    methods = balancer.get_available_methods()
+    result = []
+    for category, method_list in methods.items():
+        for method_name in method_list:
+            method_id = CANONICAL_METHOD_IDS.get(method_name, method_name.lower().replace(' ', '_'))
+            result.append({
+                "id": method_id,
+                "name": method_name,
+                "category": category,
+                "description": METHOD_DESCRIPTIONS.get(method_name, f"{category} method: {method_name}")
+            })
+    return {"methods": result}
+
 @app.post("/api/balance")
-def balance_data(request: BalancerRequest):
+def apply_balance(request: BalancerRequest):
     session = get_session(request.session_id)
     
     if session["dataset"] is None:
@@ -680,32 +756,54 @@ def balance_data(request: BalancerRequest):
     df = session["dataset"]
     balancer = DataBalancer()
     
+    method_name = METHOD_ID_MAPPING.get(request.method, request.method)
+    
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    feature_cols = [col for col in numeric_cols if col != request.target_column]
+    
+    if len(feature_cols) == 0:
+        raise HTTPException(status_code=400, detail="No numeric feature columns available for balancing")
+    
+    validation = balancer.validate_data(df, feature_cols, request.target_column)
+    if not validation['valid']:
+        raise HTTPException(status_code=400, detail="; ".join(validation['errors']))
+    
     try:
-        balanced_df, summary = balancer.balance_dataset(
-            df, request.target_column, request.method, request.parameters or {}
+        result = balancer.balance_data(
+            df, feature_cols, request.target_column, method_name,
+            random_state=request.parameters.get('random_state', 42) if request.parameters else 42
         )
+        
+        if not result['success']:
+            raise HTTPException(status_code=400, detail=result.get('error', 'Balancing failed'))
+        
+        balanced_df = result['balanced_data']
         
         session["undo_stack"].append({
             "dataset": session["dataset"].copy(),
             "timestamp": datetime.now().isoformat()
         })
+        if len(session["undo_stack"]) > 20:
+            session["undo_stack"].pop(0)
+        session["redo_stack"].clear()
         session["dataset"] = balanced_df
         
-        def make_serializable(obj):
-            if isinstance(obj, dict):
-                return {k: make_serializable(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [make_serializable(v) for v in obj]
-            elif isinstance(obj, (np.integer, np.floating)):
-                return float(obj) if np.isfinite(obj) else None
-            elif isinstance(obj, np.ndarray):
-                return obj.tolist()
-            elif pd.isna(obj):
-                return None
-            return obj
+        original_dist = result.get('original_distribution', pd.Series())
+        balanced_dist = result.get('balanced_distribution', pd.Series())
+        
+        summary = {
+            "method": method_name,
+            "original_samples": result.get('original_size', len(df)),
+            "new_samples": result.get('balanced_size', len(balanced_df)),
+            "original_distribution": {str(k): int(v) for k, v in original_dist.items()} if hasattr(original_dist, 'items') else {},
+            "class_distribution": {str(k): int(v) for k, v in balanced_dist.items()} if hasattr(balanced_dist, 'items') else {},
+            "feature_columns_used": len(feature_cols)
+        }
         
         return {"success": True, "summary": make_serializable(summary)}
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

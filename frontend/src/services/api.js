@@ -139,6 +139,11 @@ const api = {
     return response.data;
   },
 
+  getBalancingMethods: async () => {
+    const response = await client.get('/balance/methods');
+    return response.data;
+  },
+
   getDistributionChart: async (sessionId, column) => {
     const response = await client.get(`/visualization/${sessionId}/distribution/${column}`);
     return response.data;
