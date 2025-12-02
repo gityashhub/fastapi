@@ -110,6 +110,31 @@ A modern web application for statistical agencies, designed to clean and analyze
 - **Frontend App**: `cd frontend && npm run dev` (runs on port 5000)
 
 ## Recent Updates (December 2025)
+
+### UI/UX Enhancements
+- **Anomaly Detection Page**: Tabbed interface for Type Anomalies and Duplicate Removal with action dropdowns
+- **Column Analysis Page**: 6-tab interface (Basic Info, Missing Data, Outliers, Distribution, Rule Violations, Recommendations)
+- **Cleaning Wizard Page**: Survey weights support, undo/redo controls, AI guidance section, method parameters
+- **Visualization Page**: Custom chart builder with 11 chart types (bar, line, scatter, box, violin, histogram, KDE, Q-Q, pie, heatmap, correlation)
+- **Hypothesis Testing Page**: AI-powered test selection, test browsing tabs, configuration options
+- **Data Balancer Page**: Feature column selection, stratified train/test split, step-by-step workflow
+- **AI Assistant Page**: Quick actions, context modes (General/Column/Method/Stats), conversation export
+- **Reports Page**: Report configuration, section selection, preview/export tabs, saved visualizations
+
+### New API Endpoints
+- `POST /api/anomaly/detect/{session_id}/{column}` - Per-column anomaly detection
+- `POST /api/anomaly/duplicates/detect` - Detect duplicate rows
+- `POST /api/anomaly/duplicates/remove` - Remove duplicate rows
+- `POST /api/visualization/generate` - Custom chart generation
+- `POST /api/weights/configure` - Survey weights configuration
+- `POST /api/clean/preview` - Preview cleaning changes before applying
+- `GET /api/balance/distribution/{session_id}/{column}` - Class distribution
+- `POST /api/balance/split` - Stratified train/test split
+- `POST /api/hypothesis/ai-recommend` - AI-powered test recommendation
+- `POST /api/report/preview` - Generate report preview
+- `POST /api/report/generate` - Download full report
+
+### Previous Updates
 - **React + FastAPI Migration**: Complete rewrite from Streamlit to modern React/FastAPI architecture
 - **Modern UI**: Polished, professional interface with Tailwind CSS
 - **Improved Performance**: Client-side rendering, optimized API endpoints
