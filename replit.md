@@ -62,8 +62,11 @@ A modern web application for statistical agencies, designed to clean and analyze
 - **Auto Column Type Detection**: binary, categorical, continuous, ordinal, integer, text, datetime
 - **Missing Value Handling**: Mean/median/mode imputation, KNN, regression, interpolation
 - **Outlier Detection**: IQR, Z-score, isolation forest with winsorization and capping
-- **Statistical Tests**: t-tests, ANOVA, correlation, chi-square, Mann-Whitney
-- **Data Balancing**: 6 methods (SMOTE, ADASYN, random over/under, hybrid)
+- **Statistical Tests**: t-tests, ANOVA, correlation, chi-square, Mann-Whitney, and more
+- **Data Balancing**: 14 methods across 3 categories:
+  - Oversampling: Random Oversampling, SMOTE
+  - Undersampling: Random Undersampling, Tomek Links, NearMiss (1-3), ENN, CNN, OSS, Cluster Centroids, NCR
+  - Hybrid: SMOTE + Tomek Links, SMOTE + ENN
 - **Undo/Redo**: Full operation history with 20-step limit
 - **Export**: CSV, Excel, and JSON configuration
 
@@ -97,7 +100,8 @@ A modern web application for statistical agencies, designed to clean and analyze
 - `POST /api/hypothesis/test` - Run hypothesis test
 
 ### Balancing & Export
-- `POST /api/balance` - Balance dataset
+- `GET /api/balance/methods` - Get available balancing methods with categories
+- `POST /api/balance` - Balance dataset (auto-selects numeric feature columns)
 - `GET /api/export/data/{session_id}` - Export data
 - `POST /api/export/config/{session_id}` - Export configuration
 
@@ -111,3 +115,6 @@ A modern web application for statistical agencies, designed to clean and analyze
 - **Improved Performance**: Client-side rendering, optimized API endpoints
 - **Better UX**: Responsive design, animated transitions, toast notifications
 - **API-First Design**: RESTful API enabling future mobile/desktop clients
+- **Data Balancer Enhancement**: 14 balancing methods with categorized UI (Oversampling/Undersampling/Hybrid)
+- **Fixed JSON Serialization**: Resolved numpy/pandas type serialization issues across API endpoints
+- **Method ID Consistency**: Frontend and backend now use consistent canonical method identifiers
