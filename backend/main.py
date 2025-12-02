@@ -91,6 +91,35 @@ def serialize_value(val):
         return val.isoformat()
     return val
 
+def make_serializable(obj):
+    """Recursively convert numpy/pandas types to native Python types for JSON serialization."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {str(k): make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_serializable(v) for v in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        val = float(obj)
+        return val if np.isfinite(val) else None
+    elif isinstance(obj, np.ndarray):
+        return [make_serializable(v) for v in obj.tolist()]
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif isinstance(obj, pd.Timestamp):
+        return obj.isoformat()
+    elif pd.isna(obj):
+        return None
+    elif isinstance(obj, (str, int, float, bool)):
+        return obj
+    else:
+        try:
+            return str(obj)
+        except:
+            return None
+
 def df_to_json(df: pd.DataFrame, max_rows: int = 1000) -> Dict[str, Any]:
     if len(df) > max_rows:
         sample_df = df.head(max_rows)
@@ -550,7 +579,7 @@ def redo_operation(session_id: str):
 def get_cleaning_history(session_id: str):
     session = get_session(session_id)
     return {
-        "cleaning_history": session["cleaning_history"],
+        "cleaning_history": make_serializable(session["cleaning_history"]),
         "undo_available": len(session["undo_stack"]) > 0,
         "redo_available": len(session["redo_stack"]) > 0
     }
@@ -738,7 +767,7 @@ def export_config(session_id: str):
     
     config = {
         "column_types": session["column_types"],
-        "cleaning_history": session["cleaning_history"],
+        "cleaning_history": make_serializable(session["cleaning_history"]),
         "exported_at": datetime.now().isoformat()
     }
     
@@ -834,7 +863,7 @@ def ask_ai(request: AIQuestionRequest):
                 'missing_total': int(df.isnull().sum().sum()),
                 'columns_cleaned': len(session["cleaning_history"])
             },
-            'cleaning_history': session["cleaning_history"]
+            'cleaning_history': make_serializable(session["cleaning_history"])
         }
         
         dataset_info = {
