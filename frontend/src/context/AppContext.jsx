@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import api from '../services/api';
 
@@ -8,25 +8,159 @@ export function useApp() {
   return useContext(AppContext);
 }
 
+const STORAGE_KEYS = {
+  SESSION_ID: 'renvo_session_id',
+  DATASET: 'renvo_dataset',
+  COLUMN_TYPES: 'renvo_column_types',
+  STATS: 'renvo_stats',
+  COLUMN_INFO: 'renvo_column_info',
+  COLUMN_ANALYSIS: 'renvo_column_analysis'
+};
+
+const loadFromStorage = (key, defaultValue = null) => {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : defaultValue;
+  } catch (e) {
+    console.error(`Failed to load ${key} from storage:`, e);
+    return defaultValue;
+  }
+};
+
+const sanitizeForStorage = (value) => {
+  if (value === null || value === undefined) return null;
+  
+  const sanitize = (obj) => {
+    if (obj === null || obj === undefined) return null;
+    if (typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(sanitize);
+    if (obj instanceof Set) return [...obj];
+    if (obj instanceof Map) return Object.fromEntries(obj);
+    if (obj instanceof Date) return obj.toISOString();
+    
+    const sanitized = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === 'function') continue;
+      sanitized[k] = sanitize(v);
+    }
+    return sanitized;
+  };
+  
+  return sanitize(value);
+};
+
+const saveToStorage = (key, value) => {
+  try {
+    if (value === null || value === undefined) {
+      localStorage.removeItem(key);
+    } else {
+      const sanitized = sanitizeForStorage(value);
+      localStorage.setItem(key, JSON.stringify(sanitized));
+    }
+  } catch (e) {
+    console.error(`Failed to save ${key} to storage:`, e);
+  }
+};
+
 export function AppProvider({ children }) {
   const [sessionId, setSessionId] = useState(() => {
-    const saved = localStorage.getItem('sessionId');
+    const saved = loadFromStorage(STORAGE_KEYS.SESSION_ID);
     return saved || uuidv4();
   });
   
-  const [dataset, setDataset] = useState(null);
-  const [columnTypes, setColumnTypes] = useState({});
-  const [columnAnalysis, setColumnAnalysis] = useState({});
-  const [stats, setStats] = useState(null);
-  const [columnInfo, setColumnInfo] = useState([]);
+  const [dataset, setDatasetState] = useState(() => loadFromStorage(STORAGE_KEYS.DATASET));
+  const [columnTypes, setColumnTypesState] = useState(() => loadFromStorage(STORAGE_KEYS.COLUMN_TYPES, {}));
+  const [columnAnalysis, setColumnAnalysisState] = useState(() => loadFromStorage(STORAGE_KEYS.COLUMN_ANALYSIS, {}));
+  const [stats, setStatsState] = useState(() => loadFromStorage(STORAGE_KEYS.STATS));
+  const [columnInfo, setColumnInfoState] = useState(() => loadFromStorage(STORAGE_KEYS.COLUMN_INFO, []));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [undoAvailable, setUndoAvailable] = useState(false);
   const [redoAvailable, setRedoAvailable] = useState(false);
+  const [sessionInitialized, setSessionInitialized] = useState(false);
+
+  const setDataset = useCallback((value) => {
+    setDatasetState(value);
+    saveToStorage(STORAGE_KEYS.DATASET, value);
+  }, []);
+
+  const setColumnTypes = useCallback((value) => {
+    setColumnTypesState(value);
+    saveToStorage(STORAGE_KEYS.COLUMN_TYPES, value);
+  }, []);
+
+  const setStats = useCallback((value) => {
+    setStatsState(value);
+    saveToStorage(STORAGE_KEYS.STATS, value);
+  }, []);
+
+  const setColumnInfo = useCallback((value) => {
+    setColumnInfoState(value);
+    saveToStorage(STORAGE_KEYS.COLUMN_INFO, value);
+  }, []);
+
+  const setColumnAnalysis = useCallback((value) => {
+    if (typeof value === 'function') {
+      setColumnAnalysisState(prev => {
+        const newValue = value(prev);
+        saveToStorage(STORAGE_KEYS.COLUMN_ANALYSIS, newValue);
+        return newValue;
+      });
+    } else {
+      setColumnAnalysisState(value);
+      saveToStorage(STORAGE_KEYS.COLUMN_ANALYSIS, value);
+    }
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('sessionId', sessionId);
-    api.createSession(sessionId);
+    let isMounted = true;
+    
+    const initSession = async () => {
+      try {
+        await api.createSession(sessionId);
+        
+        if (!isMounted) return;
+        
+        saveToStorage(STORAGE_KEYS.SESSION_ID, sessionId);
+        
+        if (dataset && !sessionInitialized) {
+          try {
+            const result = await api.getStats(sessionId);
+            if (!isMounted) return;
+            
+            if (result && result.stats) {
+              setStats(result.stats);
+              if (result.column_types) setColumnTypes(result.column_types);
+              setSessionInitialized(true);
+            }
+          } catch (statsError) {
+            if (!isMounted) return;
+            
+            if (statsError.response?.status === 404 || statsError.response?.status === 500) {
+              setDatasetState(null);
+              setStatsState(null);
+              setColumnInfoState([]);
+              setColumnTypesState({});
+              setColumnAnalysisState({});
+              
+              Object.values(STORAGE_KEYS).forEach(key => {
+                if (key !== STORAGE_KEYS.SESSION_ID) {
+                  localStorage.removeItem(key);
+                }
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Session initialization error:', err);
+      }
+    };
+    
+    initSession();
+    
+    return () => {
+      isMounted = false;
+    };
   }, [sessionId]);
 
   const uploadFile = async (file) => {
@@ -158,6 +292,27 @@ export function AppProvider({ children }) {
     }
   };
 
+  const clearSession = useCallback(() => {
+    setSessionInitialized(false);
+    setDatasetState(null);
+    setStatsState(null);
+    setColumnInfoState([]);
+    setColumnTypesState({});
+    setColumnAnalysisState({});
+    setUndoAvailable(false);
+    setRedoAvailable(false);
+    
+    Object.values(STORAGE_KEYS).forEach(key => {
+      localStorage.removeItem(key);
+    });
+    
+    setTimeout(() => {
+      const newSessionId = uuidv4();
+      setSessionId(newSessionId);
+      saveToStorage(STORAGE_KEYS.SESSION_ID, newSessionId);
+    }, 0);
+  }, []);
+
   const value = {
     sessionId,
     dataset,
@@ -169,6 +324,7 @@ export function AppProvider({ children }) {
     error,
     undoAvailable,
     redoAvailable,
+    sessionInitialized,
     uploadFile,
     fetchData,
     fetchStats,
@@ -179,6 +335,7 @@ export function AppProvider({ children }) {
     undo,
     redo,
     resetToOriginal,
+    clearSession,
     setError,
     setLoading
   };

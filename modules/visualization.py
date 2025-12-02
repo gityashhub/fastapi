@@ -403,3 +403,404 @@ class DataVisualizer:
             figures.append(quality_fig)
         
         return figures
+
+    def plot_bar_chart(self, df: pd.DataFrame, x_column: str, y_column: str = None) -> go.Figure:
+        """Create a bar chart for the specified columns"""
+        if df is None or df.empty:
+            fig = go.Figure()
+            fig.add_annotation(text="No data available", x=0.5, y=0.5, 
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if x_column not in df.columns:
+            fig = go.Figure()
+            fig.add_annotation(text=f"Column '{x_column}' not found", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        try:
+            if y_column and y_column in df.columns:
+                data = df.groupby(x_column)[y_column].mean().reset_index()
+                fig = go.Figure(data=[
+                    go.Bar(x=data[x_column], y=data[y_column], marker_color='steelblue')
+                ])
+                fig.update_layout(
+                    title=f"{y_column} by {x_column}",
+                    xaxis_title=x_column,
+                    yaxis_title=y_column,
+                    height=400
+                )
+            else:
+                value_counts = df[x_column].value_counts().head(20)
+                fig = go.Figure(data=[
+                    go.Bar(x=value_counts.index.astype(str), y=value_counts.values, marker_color='steelblue')
+                ])
+                fig.update_layout(
+                    title=f"Distribution of {x_column}",
+                    xaxis_title=x_column,
+                    yaxis_title="Count",
+                    height=400
+                )
+        except Exception as e:
+            fig = go.Figure()
+            fig.add_annotation(text=f"Error creating chart: {str(e)[:50]}", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=14)
+        return fig
+    
+    def plot_line_chart(self, df: pd.DataFrame, columns: List[str]) -> go.Figure:
+        """Create a line chart for the specified columns"""
+        fig = go.Figure()
+        
+        if df is None or df.empty:
+            fig.add_annotation(text="No data available", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if not columns:
+            fig.add_annotation(text="No columns selected", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        valid_cols = []
+        for col in columns:
+            if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
+                try:
+                    fig.add_trace(go.Scatter(
+                        x=df.index,
+                        y=df[col],
+                        mode='lines+markers',
+                        name=col
+                    ))
+                    valid_cols.append(col)
+                except Exception:
+                    continue
+        
+        if not valid_cols:
+            fig.add_annotation(text="No numeric columns found for line chart", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+        
+        fig.update_layout(
+            title="Line Chart",
+            xaxis_title="Index",
+            yaxis_title="Value",
+            height=400
+        )
+        return fig
+    
+    def plot_scatter(self, df: pd.DataFrame, x_column: str, y_column: str) -> go.Figure:
+        """Create a scatter plot for two columns"""
+        fig = go.Figure()
+        
+        if df is None or df.empty:
+            fig.add_annotation(text="No data available", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if x_column not in df.columns or y_column not in df.columns:
+            missing = []
+            if x_column not in df.columns:
+                missing.append(x_column)
+            if y_column not in df.columns:
+                missing.append(y_column)
+            fig.add_annotation(text=f"Column(s) not found: {', '.join(missing)}", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=14)
+            return fig
+        
+        try:
+            fig.add_trace(go.Scatter(
+                x=df[x_column],
+                y=df[y_column],
+                mode='markers',
+                marker=dict(color='steelblue', size=8, opacity=0.6)
+            ))
+            fig.update_layout(
+                title=f"{y_column} vs {x_column}",
+                xaxis_title=x_column,
+                yaxis_title=y_column,
+                height=400
+            )
+        except Exception as e:
+            fig.add_annotation(text=f"Error: {str(e)[:50]}", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=14)
+        return fig
+    
+    def plot_box(self, df: pd.DataFrame, columns: List[str]) -> go.Figure:
+        """Create box plots for the specified columns"""
+        fig = go.Figure()
+        
+        if df is None or df.empty:
+            fig.add_annotation(text="No data available", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if not columns:
+            fig.add_annotation(text="No columns selected", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        valid_cols = []
+        for col in columns:
+            if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
+                try:
+                    fig.add_trace(go.Box(y=df[col], name=col))
+                    valid_cols.append(col)
+                except Exception:
+                    continue
+        
+        if not valid_cols:
+            fig.add_annotation(text="No numeric columns found for box plot", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+        
+        fig.update_layout(
+            title="Box Plot",
+            yaxis_title="Value",
+            height=400
+        )
+        return fig
+    
+    def plot_violin(self, df: pd.DataFrame, columns: List[str]) -> go.Figure:
+        """Create violin plots for the specified columns"""
+        fig = go.Figure()
+        
+        if df is None or df.empty:
+            fig.add_annotation(text="No data available", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if not columns:
+            fig.add_annotation(text="No columns selected", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        valid_cols = []
+        for col in columns:
+            if col in df.columns and pd.api.types.is_numeric_dtype(df[col]):
+                try:
+                    fig.add_trace(go.Violin(y=df[col], name=col, box_visible=True))
+                    valid_cols.append(col)
+                except Exception:
+                    continue
+        
+        if not valid_cols:
+            fig.add_annotation(text="No numeric columns found for violin plot", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+        
+        fig.update_layout(
+            title="Violin Plot",
+            yaxis_title="Value",
+            height=400
+        )
+        return fig
+    
+    def plot_kde(self, df: pd.DataFrame, column: str) -> go.Figure:
+        """Create a KDE (Kernel Density Estimation) plot"""
+        fig = go.Figure()
+        
+        if df is None or (hasattr(df, 'empty') and df.empty):
+            fig.add_annotation(text="No data available", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if not column or column not in df.columns:
+            fig.add_annotation(text=f"Column '{column}' not found", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        try:
+            col_data = df[column]
+        except (KeyError, TypeError):
+            fig.add_annotation(text=f"Error accessing column '{column}'", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if not pd.api.types.is_numeric_dtype(col_data):
+            fig.add_annotation(text=f"Column '{column}' is not numeric", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        series = col_data.dropna()
+        if len(series) < 2:
+            fig.add_annotation(text="Insufficient data for KDE", 
+                             x=0.5, y=0.5, xref="paper", yref="paper",
+                             showarrow=False, font_size=16)
+            return fig
+        
+        try:
+            from scipy import stats
+            kde = stats.gaussian_kde(series)
+            x_range = np.linspace(series.min(), series.max(), 200)
+            y_kde = kde(x_range)
+            
+            fig.add_trace(go.Scatter(x=x_range, y=y_kde, mode='lines', 
+                                    fill='tozeroy', name='KDE'))
+            fig.update_layout(
+                title=f"KDE of {column}",
+                xaxis_title=column,
+                yaxis_title="Density",
+                height=400
+            )
+        except ImportError:
+            fig = px.histogram(df, x=column, histnorm='probability density', nbins=50)
+            fig.update_layout(title=f"Distribution of {column}", height=400)
+        except Exception as e:
+            fig.add_annotation(text=f"Error: {str(e)[:50]}", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=14)
+        
+        return fig
+    
+    def plot_qq(self, df: pd.DataFrame, column: str) -> go.Figure:
+        """Create a Q-Q plot to check normality"""
+        fig = go.Figure()
+        
+        if df is None or (hasattr(df, 'empty') and df.empty):
+            fig.add_annotation(text="No data available", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if not column or column not in df.columns:
+            fig.add_annotation(text=f"Column '{column}' not found", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        try:
+            col_data = df[column]
+        except (KeyError, TypeError):
+            fig.add_annotation(text=f"Error accessing column '{column}'", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if not pd.api.types.is_numeric_dtype(col_data):
+            fig.add_annotation(text=f"Column '{column}' is not numeric", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        series = col_data.dropna()
+        if len(series) < 2:
+            fig.add_annotation(text="Insufficient data for Q-Q plot", 
+                             x=0.5, y=0.5, xref="paper", yref="paper",
+                             showarrow=False, font_size=16)
+            return fig
+        
+        try:
+            from scipy import stats
+            sorted_data = np.sort(series)
+            theoretical_quantiles = stats.norm.ppf(np.linspace(0.01, 0.99, len(sorted_data)))
+            
+            fig.add_trace(go.Scatter(
+                x=theoretical_quantiles,
+                y=sorted_data,
+                mode='markers',
+                name='Data'
+            ))
+            
+            min_val = min(theoretical_quantiles.min(), sorted_data.min())
+            max_val = max(theoretical_quantiles.max(), sorted_data.max())
+            fig.add_trace(go.Scatter(
+                x=[min_val, max_val],
+                y=[min_val, max_val],
+                mode='lines',
+                name='Reference Line',
+                line=dict(dash='dash', color='red')
+            ))
+            
+            fig.update_layout(
+                title=f"Q-Q Plot of {column}",
+                xaxis_title="Theoretical Quantiles",
+                yaxis_title="Sample Quantiles",
+                height=400
+            )
+        except ImportError:
+            sorted_data = np.sort(series)
+            fig.add_trace(go.Scatter(
+                x=list(range(len(sorted_data))),
+                y=sorted_data,
+                mode='markers',
+                name='Sorted Data'
+            ))
+            fig.update_layout(title=f"Sorted Values of {column}", height=400)
+        except Exception as e:
+            fig.add_annotation(text=f"Error: {str(e)[:50]}", 
+                             x=0.5, y=0.5, xref="paper", yref="paper",
+                             showarrow=False, font_size=14)
+        
+        return fig
+    
+    def plot_pie(self, df: pd.DataFrame, column: str) -> go.Figure:
+        """Create a pie chart for categorical data"""
+        fig = go.Figure()
+        
+        if df is None or df.empty:
+            fig.add_annotation(text="No data available", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if column not in df.columns:
+            fig.add_annotation(text=f"Column '{column}' not found", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        try:
+            value_counts = df[column].value_counts().head(10)
+            if len(value_counts) == 0:
+                fig.add_annotation(text="No values to display", x=0.5, y=0.5,
+                                 xref="paper", yref="paper", showarrow=False, font_size=16)
+                return fig
+            
+            fig.add_trace(go.Pie(
+                labels=value_counts.index.astype(str), 
+                values=value_counts.values
+            ))
+            fig.update_layout(
+                title=f"Distribution of {column}",
+                height=400
+            )
+        except Exception as e:
+            fig.add_annotation(text=f"Error: {str(e)[:50]}", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=14)
+        
+        return fig
+    
+    def plot_heatmap(self, df: pd.DataFrame, columns: List[str]) -> go.Figure:
+        """Create a heatmap for the specified columns"""
+        fig = go.Figure()
+        
+        if df is None or df.empty:
+            fig.add_annotation(text="No data available", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=16)
+            return fig
+        
+        if not columns or len(columns) < 2:
+            return self.plot_correlation_matrix(df)
+        
+        valid_columns = [c for c in columns if c in df.columns]
+        if len(valid_columns) < 2:
+            fig.add_annotation(text="Need at least 2 valid columns for heatmap", 
+                             x=0.5, y=0.5, xref="paper", yref="paper",
+                             showarrow=False, font_size=16)
+            return fig
+        
+        try:
+            subset = df[valid_columns].select_dtypes(include=[np.number])
+            if len(subset.columns) < 2:
+                fig.add_annotation(text="Need at least 2 numeric columns for heatmap", 
+                                 x=0.5, y=0.5, xref="paper", yref="paper",
+                                 showarrow=False, font_size=16)
+                return fig
+            
+            corr = subset.corr()
+            fig = go.Figure(data=go.Heatmap(
+                z=corr.values,
+                x=corr.columns.tolist(),
+                y=corr.columns.tolist(),
+                colorscale='RdBu',
+                zmid=0
+            ))
+            fig.update_layout(
+                title="Correlation Heatmap",
+                height=500
+            )
+        except Exception as e:
+            fig.add_annotation(text=f"Error: {str(e)[:50]}", x=0.5, y=0.5,
+                             xref="paper", yref="paper", showarrow=False, font_size=14)
+        
+        return fig

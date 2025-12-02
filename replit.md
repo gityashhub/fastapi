@@ -134,6 +134,12 @@ A modern web application for statistical agencies, designed to clean and analyze
 - `POST /api/report/preview` - Generate report preview
 - `POST /api/report/generate` - Download full report
 
+### Bug Fixes & Improvements
+- **Fixed Report Generation**: Added `generate_html_report` method to ReportGenerator class for downloadable reports
+- **Fixed Visualization Generation**: Added all chart generation methods (bar, line, scatter, box, violin, KDE, Q-Q, pie, heatmap)
+- **Session State Persistence**: Enhanced AppContext to persist session data in localStorage across page navigations
+- **Groq API Integration**: Configured AI Assistant to use Groq API (GROQ_API_KEY) for LLM features
+
 ### Previous Updates
 - **React + FastAPI Migration**: Complete rewrite from Streamlit to modern React/FastAPI architecture
 - **Modern UI**: Polished, professional interface with Tailwind CSS

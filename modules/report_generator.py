@@ -1157,6 +1157,153 @@ All operations listed above can be independently verified and reproduced using t
         
         return json.dumps(export_data, indent=2, ensure_ascii=False)
     
+    def generate_html_report(self, report_data: Dict[str, Any], df: pd.DataFrame) -> str:
+        """Generate a comprehensive HTML report for download"""
+        summary = report_data.get('summary', {})
+        column_analysis = report_data.get('column_analysis', {})
+        cleaning_history = report_data.get('cleaning_history', {})
+        column_types = report_data.get('column_types', {})
+        
+        html_content = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Cleaning Report - {summary.get('dataset_name', 'Dataset')}</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background: #f5f5f5; }}
+        .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 10px; margin-bottom: 30px; }}
+        .header h1 {{ font-size: 2.5rem; margin-bottom: 10px; }}
+        .header p {{ opacity: 0.9; }}
+        .card {{ background: white; border-radius: 10px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+        .card h2 {{ color: #667eea; border-bottom: 2px solid #667eea; padding-bottom: 10px; margin-bottom: 20px; }}
+        .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }}
+        .metric {{ background: white; padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+        .metric-value {{ font-size: 2rem; font-weight: bold; color: #667eea; }}
+        .metric-label {{ color: #666; font-size: 0.9rem; margin-top: 5px; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+        th, td {{ padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }}
+        th {{ background: #667eea; color: white; }}
+        tr:hover {{ background: #f5f5f5; }}
+        .badge {{ display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; }}
+        .badge-success {{ background: #d4edda; color: #155724; }}
+        .badge-warning {{ background: #fff3cd; color: #856404; }}
+        .badge-danger {{ background: #f8d7da; color: #721c24; }}
+        .footer {{ text-align: center; padding: 20px; color: #666; font-size: 0.9rem; }}
+        .column-section {{ margin-bottom: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px; }}
+        .column-section h4 {{ color: #333; margin-bottom: 10px; }}
+        ul {{ padding-left: 20px; }}
+        li {{ margin-bottom: 5px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Data Cleaning Report</h1>
+            <p>Generated on {summary.get('generated_at', datetime.now().isoformat())[:19].replace('T', ' ')}</p>
+        </div>
+        
+        <div class="metrics">
+            <div class="metric">
+                <div class="metric-value">{summary.get('rows', 0):,}</div>
+                <div class="metric-label">Total Rows</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value">{summary.get('columns', 0)}</div>
+                <div class="metric-label">Total Columns</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value">{summary.get('missing_values', 0):,}</div>
+                <div class="metric-label">Missing Values</div>
+            </div>
+            <div class="metric">
+                <div class="metric-value">{summary.get('memory_usage', 0):.2f} MB</div>
+                <div class="metric-label">Memory Usage</div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>Dataset Overview</h2>
+            <table>
+                <tr><th>Property</th><th>Value</th></tr>
+                <tr><td>Dataset Name</td><td>{summary.get('dataset_name', 'Uploaded Dataset')}</td></tr>
+                <tr><td>Total Records</td><td>{summary.get('rows', 0):,}</td></tr>
+                <tr><td>Total Columns</td><td>{summary.get('columns', 0)}</td></tr>
+                <tr><td>Total Missing Values</td><td>{summary.get('missing_values', 0):,}</td></tr>
+                <tr><td>Memory Usage</td><td>{summary.get('memory_usage', 0):.2f} MB</td></tr>
+            </table>
+        </div>
+        
+        <div class="card">
+            <h2>Column Types</h2>
+            <table>
+                <tr><th>Column Name</th><th>Detected Type</th></tr>
+'''
+        
+        for col_name, col_type in column_types.items():
+            html_content += f'                <tr><td>{col_name}</td><td><span class="badge badge-success">{col_type}</span></td></tr>\n'
+        
+        html_content += '''            </table>
+        </div>
+'''
+        
+        if column_analysis:
+            html_content += '''
+        <div class="card">
+            <h2>Column Analysis Summary</h2>
+'''
+            for col_name, analysis in column_analysis.items():
+                basic_info = analysis.get('basic_info', {})
+                data_quality = analysis.get('data_quality', {})
+                score = data_quality.get('score', 100)
+                badge_class = 'badge-success' if score >= 80 else 'badge-warning' if score >= 60 else 'badge-danger'
+                
+                html_content += f'''
+            <div class="column-section">
+                <h4>{col_name} <span class="badge {badge_class}">Score: {score}/100</span></h4>
+                <ul>
+                    <li><strong>Missing:</strong> {basic_info.get('missing_count', 0):,} ({basic_info.get('missing_percentage', 0):.2f}%)</li>
+                    <li><strong>Unique Values:</strong> {basic_info.get('unique_count', 0):,}</li>
+'''
+                issues = data_quality.get('issues', [])
+                if issues:
+                    html_content += '                    <li><strong>Issues:</strong> ' + ', '.join(issues[:3]) + '</li>\n'
+                html_content += '''                </ul>
+            </div>
+'''
+            html_content += '        </div>\n'
+        
+        if cleaning_history:
+            html_content += '''
+        <div class="card">
+            <h2>Cleaning Operations Applied</h2>
+            <table>
+                <tr><th>Column</th><th>Method</th><th>Timestamp</th></tr>
+'''
+            for col_name, operations in cleaning_history.items():
+                if isinstance(operations, list):
+                    for op in operations:
+                        method = op.get('method_name', 'Unknown')
+                        timestamp = op.get('timestamp', 'N/A')[:19] if op.get('timestamp') else 'N/A'
+                        html_content += f'                <tr><td>{col_name}</td><td>{method.replace("_", " ").title()}</td><td>{timestamp}</td></tr>\n'
+            
+            html_content += '''            </table>
+        </div>
+'''
+        
+        html_content += f'''
+        <div class="footer">
+            <p>Report generated by Renvo AI - Intelligent Data Cleaning Assistant</p>
+            <p>Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+        </div>
+    </div>
+</body>
+</html>'''
+        
+        return html_content
+    
     def _get_weighted_template(self) -> str:
         """Template for weighted summary report"""
         return '''<!DOCTYPE html>
