@@ -1,0 +1,66 @@
+You are a senior full-stack engineer.Your job is to fully convert this Streamlit app into a **React + FastAPI** web application. 
+
+### ❗ REQUIREMENTS
+1. **Preserve 100% of Streamlit functionality**:
+   - File upload (CSV, XLSX, XLS)
+   - Data preview (tables, metrics, column statistics)
+   - Auto column type detection
+   - Column type editing UI
+   - Column-wise analysis using ColumnAnalyzer()
+   - Progress bars for long-running operations
+   - Session handling (session_state logic must be replaced with proper React state or backend session management)
+   - Export/Import configuration
+   - Alerts, success messages, warnings
+   - Sidebar navigation / multi-page structure
+   - Dataset persistence for analysis workflows
+   - Cleaning history, undo/redo logic (convert to backend state or DB if needed)
+
+2. **Backend must be FastAPI**
+   - Do NOT rewrite logic; reuse the Python functions exactly. 
+   - Implement session state using Python dictionaries or a session manager.
+
+3. **Frontend must be React (Vite or CRA)**
+   - Create pages matching the Streamlit sections:
+       - Upload & Configuration
+       - Dataset Overview
+       - Column Type Editor
+       - Column Analysis
+       - Visualization
+       - Cleaning Wizard
+       - AI Assistant
+       - Reports
+   - Sidebar navigation identical to Streamlit sidebar.
+   - Use React components for:
+       - File uploader
+       - Table viewer (Material UI DataGrid or React Table)
+       - Progress bars
+       - Sliders
+       - Dropdowns
+       - Accordions / Expanders
+       - Metrics cards
+   - API integration using Axios.
+   - Global state via Context API or Redux.
+
+
+
+5. **Session State Replication**
+   - Replace st.session_state with:
+       ✔ FastAPI server-side session object or
+       ✔ In-memory cache (per user) or
+       ✔ Redis (if needed)
+   - Ensure dataset, column_types, column_analysis, cleaning_history persist across API calls.
+
+6. **UI Behavior**
+   - Every st.button, st.slider, st.selectbox must become a corresponding React UI element.
+   - Every st.dataframe must become a React DataGrid.
+   - Every st.metric must become a React metric/stat card.
+   - Every st.expander must become a React accordion.
+
+7. **Do NOT simplify anything.**
+   - Recreate full feature parity.
+   - Preserve dynamic logic, loops, analysis, and async behavior.
+
+Convert EVERYTHING into React + FastAPI: 
+
+
+
